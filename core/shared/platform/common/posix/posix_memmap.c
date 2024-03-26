@@ -7,6 +7,7 @@
 
 #if defined(__APPLE__) || defined(__MACH__)
 #include <libkern/OSCacheControl.h>
+#include <TargetConditionals.h>
 #endif
 
 #ifndef BH_ENABLE_TRACE_MMAP
@@ -133,7 +134,7 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
     }
 #endif /* end of BUILD_TARGET_RISCV64_LP64D || BUILD_TARGET_RISCV64_LP64 */
 
-    /* memory has't been mapped or was mapped failed previously */
+    /* memory hasn't been mapped or was mapped failed previously */
     if (addr == MAP_FAILED) {
         /* try 5 times */
         for (i = 0; i < 5; i++) {
@@ -234,6 +235,23 @@ os_munmap(void *addr, size_t size)
 #endif
     }
 }
+
+#if WASM_HAVE_MREMAP != 0
+void *
+os_mremap(void *old_addr, size_t old_size, size_t new_size)
+{
+    void *ptr = mremap(old_addr, old_size, new_size, MREMAP_MAYMOVE);
+
+    if (ptr == MAP_FAILED) {
+#if BH_ENABLE_TRACE_MMAP != 0
+        os_printf("mremap failed: %d\n", errno);
+#endif
+        return os_mremap_slow(old_addr, old_size, new_size);
+    }
+
+    return ptr;
+}
+#endif
 
 int
 os_mprotect(void *addr, size_t size, int prot)

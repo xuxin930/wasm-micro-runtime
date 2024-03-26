@@ -23,7 +23,11 @@ os_printf(const char *format, ...)
     va_list ap;
 
     va_start(ap, format);
+#ifndef BH_VPRINTF
     ret += vprintf(format, ap);
+#else
+    ret += BH_VPRINTF(format, ap);
+#endif
     va_end(ap);
 
     return ret;
@@ -32,7 +36,11 @@ os_printf(const char *format, ...)
 int
 os_vprintf(const char *format, va_list ap)
 {
+#ifndef BH_VPRINTF
     return vprintf(format, ap);
+#else
+    return BH_VPRINTF(format, ap);
+#endif
 }
 
 uint64
@@ -226,7 +234,7 @@ unlinkat(int fd, const char *path, int flag)
 }
 
 int
-utimensat(int fd, const char *path, const struct timespec *ts, int flag)
+utimensat(int fd, const char *path, const struct timespec ts[2], int flag)
 {
     errno = ENOSYS;
     return -1;
@@ -249,7 +257,7 @@ ftruncate(int fd, off_t length)
 #endif
 
 int
-futimens(int fd, const struct timespec *times)
+futimens(int fd, const struct timespec times[2])
 {
     errno = ENOSYS;
     return -1;

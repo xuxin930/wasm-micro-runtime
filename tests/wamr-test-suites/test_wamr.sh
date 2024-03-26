@@ -24,6 +24,7 @@ function help()
     echo "-S enable SIMD feature"
     echo "-G enable GC feature"
     echo "-X enable XIP feature"
+    echo "-e enable exception handling"
     echo "-x test SGX"
     echo "-w enable WASI threads"
     echo "-b use the wabt binary release package instead of compiling from the source code"
@@ -50,6 +51,7 @@ COLLECT_CODE_COVERAGE=0
 ENABLE_SIMD=0
 ENABLE_GC=0
 ENABLE_XIP=0
+ENABLE_EH=0
 ENABLE_DEBUG_VERSION=0
 ENABLE_GC_HEAP_VERIFY=0
 #unit test case arrary
@@ -70,7 +72,7 @@ WASI_TESTSUITE_COMMIT="ee807fc551978490bf1c277059aabfa1e589a6c2"
 TARGET_LIST=("AARCH64" "AARCH64_VFP" "ARMV7" "ARMV7_VFP" "THUMBV7" "THUMBV7_VFP" \
              "RISCV32" "RISCV32_ILP32F" "RISCV32_ILP32D" "RISCV64" "RISCV64_LP64F" "RISCV64_LP64D")
 
-while getopts ":s:cabgvt:m:MCpSXxwPGQF:j:T:" opt
+while getopts ":s:cabgvt:m:MCpSXexwPGQF:j:T:" opt
 do
     OPT_PARSED="TRUE"
     case $opt in
@@ -119,7 +121,7 @@ do
         ;;
         m)
         echo "set compile target of wamr" ${OPTARG}
-        TARGET=${OPTARG^^} # set target to uppercase if input x86_32 or x86_64 --> X86_32 and X86_64
+        TARGET=$(echo "$OPTARG" | tr '[a-z]' '[A-Z]') # set target to uppercase if input x86_32 or x86_64 --> X86_32 and X86_64
         ;;
         w)
         echo "enable WASI threads"
@@ -144,6 +146,10 @@ do
         X)
         echo "enable XIP feature"
         ENABLE_XIP=1
+        ;;
+        e)
+        echo "enable exception handling feature"
+        ENABLE_EH=1
         ;;
         x)
         echo "test SGX"
@@ -425,6 +431,26 @@ function spec_test()
         git apply ../../spec-test-script/thread_proposal_fix_atomic_case.patch
     fi
 
+    if [ ${ENABLE_EH} == 1 ]; then
+        echo "checkout exception-handling test cases"
+        popd
+        if [ ! -d "exception-handling" ];then
+            echo "exception-handling not exist, clone it from github"
+            git clone -b master --single-branch https://github.com/WebAssembly/exception-handling 
+        fi
+        pushd exception-handling
+
+        # restore and clean everything
+        git reset --hard 51c721661b671bb7dc4b3a3acb9e079b49778d36
+        
+        if [[ ${ENABLE_MULTI_MODULE} == 0 ]]; then
+            git apply ../../spec-test-script/exception_handling.patch
+        fi
+        
+        popd
+        echo $(pwd)
+    fi
+
     # update GC cases
     if [[ ${ENABLE_GC} == 1 ]]; then
         echo "checkout spec for GC proposal"
@@ -436,13 +462,19 @@ function spec_test()
         pushd spec
 
         git restore . && git clean -ffd .
-        # Sync constant expression descriptions
-        git reset --hard 62beb94ddd41987517781732f17f213d8b866dcc
+        # Reset to commit: "[test] Unify the error message."
+        git reset --hard 0caaadc65b5e1910512d8ae228502edcf9d60390
         git apply ../../spec-test-script/gc_ignore_cases.patch
+
+        if [[ ${ENABLE_QEMU} == 1 ]]; then
+            # Decrease the recursive count for tail call cases as nuttx qemu's
+            # native stack size is much smaller
+            git apply ../../spec-test-script/gc_nuttx_tail_call.patch
+        fi
 
         echo "compile the reference intepreter"
         pushd interpreter
-        make opt
+        make
         popd
     fi
 
@@ -461,6 +493,10 @@ function spec_test()
         if [[ $1 == 'classic-interp' || $1 == 'fast-interp' || $1 == 'aot' ]]; then
             ARGS_FOR_SPEC_TEST+="-M "
         fi
+    fi
+
+    if [[ 1 == ${ENABLE_EH} ]]; then
+        ARGS_FOR_SPEC_TEST+="-e "
     fi
 
     # sgx only enable in interp mode and aot mode
@@ -789,6 +825,7 @@ function trigger()
     local EXTRA_COMPILE_FLAGS=""
     # default enabled features
     EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_BULK_MEMORY=1"
+    EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_REF_TYPES=1"
 
     if [[ ${ENABLE_MULTI_MODULE} == 1 ]];then
         EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_MULTI_MODULE=1"
@@ -798,9 +835,6 @@ function trigger()
 
     if [[ ${ENABLE_MULTI_THREAD} == 1 ]];then
         EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_LIB_PTHREAD=1"
-        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_REF_TYPES=0"
-    else
-        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_REF_TYPES=1"
     fi
 
     if [[ ${ENABLE_SIMD} == 1 ]]; then
@@ -811,8 +845,8 @@ function trigger()
 
     if [[ ${ENABLE_GC} == 1 ]]; then
         EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_GC=1"
-        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_REF_TYPES=1"
         EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_BULK_MEMORY=1"
+        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_TAIL_CALL=1"
     fi
 
     if [[ ${ENABLE_DEBUG_VERSION} == 1 ]]; then
@@ -827,6 +861,10 @@ function trigger()
         EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_LIB_WASI_THREADS=1"
     fi
 
+    if [[ ${ENABLE_EH} == 1 ]]; then
+        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_EXCE_HANDLING=1"
+        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_TAIL_CALL=1"
+    fi
     echo "SANITIZER IS" $WAMR_BUILD_SANITIZER
 
     if [[ "$WAMR_BUILD_SANITIZER" == "ubsan" ]]; then
